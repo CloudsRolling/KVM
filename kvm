@@ -1,0 +1,188 @@
+KVM改NAT为Bridge
+kvm 改nat为桥接
+在安装一个拥有虚拟化功能的Linux操作系统(此处以CentOS为例)，一般我们有两种方法：
+1.在光盘安装的时候安装好虚拟化包或者PXE服务器上配置好虚拟化包
+2.手动在没有安装虚拟化组件的系统中安装虚拟化组件
+如果我们搭建的环境是必须使用虚拟化的，或者说虚拟化是我们搭建这套环境的主要目的之一，那么我们在进行系统安装的时候将所有
+的虚拟化组件全部安装上，避免后期出现安装不全或者某些服务依赖关系没有解决好，这样排错的时间远远高于安装时候多装几个包的时
+间。
+在我们安装好虚拟化组件(RHEL6.0之后，系统自带的均是KVM，已经没有XEN虚拟化的支持了），会自动生成一个virbr0这样的桥接设
+备
+1
+2
+3
+[root@clovemzone ~]# brctl show
+bridge name bridge id STP enabled interfaces
+virbr0 8000.5254007543ce yes virbr0-nic
+按照这边博文中所说： http://clovemfong.blog.51cto.com/3297559/1200938，virbr0默认使用的是NAT方式跟虚拟机网卡进行通
+讯，在实际生产环境中我们多数情况下面使用桥接Bridge的方式进行物理机跟虚拟机的通讯，删除这个virbr0的方法在上面给出的链接中
+已经说明，这篇文章主要讲述Bridge的简单实现原理以及实际配置方法。
+假设我们的物理机上有一块有线网卡，在系统中显示为eth0，我们搭建将其配置成桥接设备br0
+我们经常所说的Bridge设备其实就是网桥设备，也就相当于想在的二层交换机，用于连接同一网段内的所有机器，所以我们的目的就是
+将网络设备eth0配置成br0，此时br0就成为了所谓的交换机设备，我们物理机的eth0也是连接在上面的。
+1
+2
+3
+[root@clovemzone ~]# brctl show
+bridge name bridge id STP enabled interfaces
+br0 8000.0025903afe42 no eth0
+我们创建两个虚拟机之后，所有的虚拟机网卡均连接br0，此时查看br0上面连接的设备
+1
+2
+3
+4
+5
+[root@clovemzone ~]# brctl show
+bridge name bridge id STP enabled interfaces
+br0 8000.0025903afe42 no eth0
+vnet0
+vnet1
+为了让大家了解的更加透彻，可以通过下图并结合实际操作进行简单分析
+1. 查看物理机网卡设备信息 图1所示
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+[root@master ~]# ip addr show
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 16436 qdisc noqueue state UNKNOWN
+link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+inet 127.0.0.1/8 scope host lo
+inet6 ::1/128 scope host
+valid_lft forever preferred_lft forever
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+link/ether 52:54:00:a7:b7:56 brd ff:ff:ff:ff:ff:ff
+inet 192.168.3.176/24 brd 192.168.3.255 scope global eth0
+inet6 fe80::5054:ff:fea7:b756/64 scope link
+valid_lft forever preferred_lft forever
+2.配置桥接设备br0
+1
+2
+3
+4
+5
+[root@master ~]# rpm -q bridge-utils //查看桥接软件是否安装
+bridge-utils-1.2-9.el6.x86_64
+[root@master ~]# brctl show
+bridge name bridge id STP enabled interfaces
+[root@master ~]#
+此时无任何桥接设备,我们可以手动添加也可以在 文件中进行添加生效。
+(1) 手动添加
+1
+2
+3
+4
+5
+6
+7
+8
+[root@master ~]# brctl addbr br0
+[root@master ~]# brctl show
+bridge name bridge id STP enabled interfaces
+br0 8000.000000000000 no
+[root@master ~]# brctl addif br0 eth0
+[root@master ~]# brctl show
+bridge name bridge id STP enabled interfaces
+br0 8000.000000000000 no eth0
+删除eth0上面的ip地址,将br0上面添加上固定ip地址
+1
+2
+3
+[root@master ~]# ip addr del dev eth0 192.168.3.176/24 //删除eth0上的IP地址
+[root@master ~]# ifconfig br0 192.168.3.176/24 up //配置br0的IP地址并启动设备
+[root@master ~]# route add default gw 192.168.3.1 //重新加入默认网关
+查看配置是否生效
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+[root@master ~]# route //查看默认网关
+Kernel IP routing table
+Destination Gateway Genmask Flags Metric Ref Use Iface
+192.168.3.0 * 255.255.255.0 U 0 0 0 br0
+default 192.168.3.1 0.0.0.0 UG 0 0 0 br0
+[root@master ~]# ip addr show //查看eth0跟br0的IP信息
+1: lo: <LOOPBACK,UP,LOWER_UP> mtu 16436 qdisc noqueue state UNKNOWN
+link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
+inet 127.0.0.1/8 scope host lo
+inet6 ::1/128 scope host
+valid_lft forever preferred_lft forever
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc pfifo_fast state UP qlen 1000
+link/ether 52:54:00:a7:b7:56 brd ff:ff:ff:ff:ff:ff
+inet6 fe80::5054:ff:fea7:b756/64 scope link
+valid_lft forever preferred_lft forever
+3: br0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc noqueue state UNKNOWN
+link/ether 52:54:00:a7:b7:56 brd ff:ff:ff:ff:ff:ff
+inet 192.168.3.176/24 brd 192.168.3.255 scope global br0
+inet6 fe80::5054:ff:fea7:b756/64 scope link
+valid_lft forever preferred_lft forever
+[root@master ~]# ping 192.168.3.1 -w2 //测试同一网段连接是否成功，判断网卡IP是否绑定正确
+PING 192.168.3.1 (192.168.3.1) 56(84) bytes of data.
+64 bytes from 192.168.3.1: icmp_seq=1 ttl=255 time=3.45 ms
+64 bytes from 192.168.3.1: icmp_seq=2 ttl=255 time=4.20 ms
+--- 192.168.3.1 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 2000ms
+rtt min/avg/max/mdev = 3.457/3.832/4.208/0.380 ms
+[root@master ~]# ping 192.168.1.1 -w2 //测试不同网段连接是否成功，判断网关是否添加成功
+PING 192.168.1.1 (192.168.1.1) 56(84) bytes of data.
+64 bytes from 192.168.1.1: icmp_seq=1 ttl=255 time=2.38 ms
+64 bytes from 192.168.1.1: icmp_seq=2 ttl=255 time=7.64 ms
+--- 192.168.1.1 ping statistics ---
+2 packets transmitted, 2 received, 0% packet loss, time 2000ms
+rtt min/avg/max/mdev = 2.381/5.011/7.642/2.631 ms
+上面是通过命令进行的手动配置方法，但是大家都清楚，这些命令配置的结果在服务器重启之后就不能生效了，要想使得所有配置永久生
+效，我们还是需要通过配置文件进行配置，然后重启网卡设备，让系统帮我们配置，然后重启之后也是生效的。
+通过上面的手动配置方法，大家可以清楚得看到一个桥接设备的配置流程，这个在你写到配置文件里面，然后让系统帮你配置的时候是看
+不到的 :) ，那么下面我们将所有的配置还原，通过配置文件进行相关自动化配置吧。
+还原原始配置
+[root@master ~]# route delete default //删除默认网关
+[root@master ~]# route -n
+Kernel IP routing table
+Destination Gateway Genmask Flags Metric Ref Use Iface
+192.168.3.0 0.0.0.0 255.255.255.0 U 0 0 0 br0
+[root@master ~]# brctl show
+bridge name bridge id STP enabled interfaces
+br0 8000.525400a7b756 no eth0
+[root@master ~]# brctl delif br0 eth0 //断开/删除br0上的eth0设备
+[root@master ~]#ifconfig br0 down //让br0设备停止活动
+[root@master ~]#brctl delbr br0 //删除br0
+root@master ~]# brctl show //查看br0是否依然存在
+bridge name bridge id STP enabled interfaces
+[root@master ~]# ifconfig eth0 192.168.3.176/24 //重新给eth0分配IP地址
+root@master ~]# route add default gw 192.168.3.1 //重新加入默认网关
