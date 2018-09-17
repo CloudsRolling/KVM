@@ -1,0 +1,99 @@
+
+1、安装前准备
+1）服务器或者PC的CPU能支持VT技术
+2）虚拟机中安装KVM要勾选：处理器：虚拟化Intel VT-x/EPT或AMD-V/RVI（V）
+[root@localhost ~]# cat /proc/cpuinfo | grep vmx
+
+在虚拟机中安装KVM的方法有两种：
+1、创建新的虚拟机
+1）要勾选：虚拟化Intel VT-x/EPT或AMD-V/RVI（V）
+2）要勾选：虚拟化软件
+2、linux操作系统安装好的，yum安装所有虚拟化软件
+2、安装KVM所需软件
+
+[root@localhost ~]# mount /dev/cdrom /mnt
+[root@localhost ~]# vim /etc/yum.repos.d/yum.repo
+添加：
+[yum]
+name=yum
+baseurl=file:///mnt/
+enabled=1
+gpgcheck=0
+[root@localhost ~]# yum -y install qemu-kvm qemu-kvm-tools qemu-img virt-manager libvirt libvirt-python libvirt-client
+bridge-utils virt-viewer virt-install
+[root@localhost ~]# lsmod | grep kvm
+[root@localhost ~]# reboot
+
+3、配置网络
+[root@localhost ~]# vim /etc/sysconfig/network-scripts/ifcfg-eth0
+添加：
+BRIDGE="br0"
+[root@localhost ~]# vim /etc/sysconfig/network-scripts/ifcfg-br0
+添加：
+DEVICE=br0
+TYPE=Bridge
+ONBOOT=yes
+NM_CONTROLLED=no
+BOOTPROTO=none
+IPADDR=192.168.1.10
+NETMASK=255.255.255.0
+[root@localhost ~]# /etc/init.d/NetworkManager stop
+注意：要关闭网卡的守护进程。
+[root@localhost ~]# service network restart
+[root@localhost ~]# virt-manager
+[root@localhost ~]# /etc/libvirt/qemu/ //虚拟机文件
+[root@localhost ~]# /var/lib/libvirt/images/ //虚拟机磁盘文件
+注：都要删除才能建立新的同名虚拟机。
+
+1、创建KVM虚拟机：
+(略)
+2、管理KVM虚拟机：
+[root@localhost ~]# virsh list //查看正在运行
+[root@localhost ~]# virsh list --all //查看所有
+[root@localhost ~]# virsh start benet //启动
+[root@localhost ~]# virsh shutdown benet //关机
+[root@localhost ~]# virsh destroy benet //强制关机
+[root@localhost ~]# virsh autostart benet //随机启动
+[root@localhost ~]# virsh suspend benet //挂起
+[root@localhost ~]# virsh resume benet //恢复
+[root@localhost ~]# virsh undefine benet //删除
+[root@localhost ~]# virsh edit benet //编辑
+3、转换磁盘文件格式：
+KVM中有两种磁盘文件格式：raw和qcow2
+[root@localhost ~]# qemu-img convert -f raw -O qcow2 /var/lib/libvirt/images/benet.img /var/lib/libvirt/images/benet.qcow2
+[root@localhost ~]# virsh edit benet
+修改XML文件使其生效。
+[root@localhost ~]# reboot
+4、添加硬盘：
+有两种方法：
+1)图形界面中添加新磁盘
+2)命令实现：
+[root@localhost ~]#qemu-img create -f qcow2 /var/lib/libvirt/images/benet1.qcow2 10G //生成硬盘
+[root@localhost ~]#virsh edit benet
+在xml中的disk后面添加：
+<disk type='file' device='disk'>
+<driver name='qemu' type='qcow2' cache='none'/>
+<source file='/var/lib/libvirt/images/benet1.qcow2'/>
+<target dev='sdb' bus='ide'/>
+</disk>
+重启系统，是硬盘格式生效
+5、克隆KVM虚拟机：
+[root@localhost ~]# virt-clone -o benet -n accp -f /etc/libvirt/qemu/accp.xml
+6、KVM虚拟机快照：
+[root@localhost ~]# virsh snapshot-create benet //创建快照
+[root@localhost ~]# virsh snapshot-current benet //查看快照id
+[root@localhost ~]# virsh snapshot-list benet //查看快照列表
+[root@localhost ~]# virsh snapshot-revert benet 1439825720 //还原快照
+[root@localhost ~]# virsh snapshot-delete benet 1439825720 //删除快照
+7、使用命令创建虚拟机
+--name 指定KVM虚拟机的名字
+--ram 内存大小
+--file 磁盘文件的路径
+--vcpus 指定虚拟机的 CPU 数量
+--file-size=30(默认单位是G) 设置硬盘大小
+--cdrom 光驱提供boot.iso 镜像
+--location 本地提供boot.iso 镜像
+--network network:default 设置网卡(使用默认)
+--vnc --vncport=5911 连接桌面环境的vnc端口
+[root@localhost ~]# virt-install --name=haha --ram=2048 --vcpus=1 --file=/var/lib/libvirt/images/haha.img --file-size=30 --
+location=/tmp/rhel6.5.iso --force &
